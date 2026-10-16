@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Buglasan 2025 - Deployment Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --panel: #121212;
+      --text: #f3f3f3;
+      --gold: #ffcc00;
+      --accent1: #ff0077;
+      --accent2: #ff6600;
+      --accent3: #ffee00;
+      --accent4: #00ff99;
+      --accent5: #0099ff;
+    }
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, Arial, sans-serif;
+    }
+    header {
+      background: linear-gradient(90deg, var(--accent1), var(--accent2), var(--accent3), var(--accent4), var(--accent5));
+      background-size: 300% 300%;
+      background-color: var(--bg);
+      animation: gradientFlow 8s linear infinite;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      position: relative;
+      z-index: 1;
+    }
+    header::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.3);
+      z-index: -1;
+    }
+    @keyframes gradientFlow {
+      0% { background-position: 0 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0 50%; }
+    }
+    header img { height: 50px; border-radius: 50%; background: #fff; padding: 1.1px; }
+    header h1 { margin: 0; font-size: 18px; font-weight: 700; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,0.6); }
+    nav { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+    nav select, nav button { transition: 0.2s all; }
+    nav select:hover, nav button:hover { background: #0f0; color: #000; }
+    nav select, nav button { padding: 6px 10px; border-radius: 8px; border: none; background: #1f1f1f; color: #fff; }
+    .app { display: flex; height: calc(100vh - 72px); }
+    .sidebar { width: 32%; min-width: 320px; background: var(--panel); padding: 14px; overflow: auto; border-right: 1px solid rgba(255,255,255,0.04); }
+    h1 { margin-left: 10px; padding: 4px 8px; border-radius: 4px; color: #fff; font-family: 'Helvetica'; font-size: 28px; font-weight: 400; letter-spacing: 0.5px; }
+    h2 { margin: 0 0 8px 0; color: var(--gold); font-size: 14px; text-transform: uppercase; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px; border: 1px solid rgba(255,255,255,0.2); vertical-align: middle; }
+    th { color: var(--gold); text-align: left; }
+    .person-row { cursor: pointer; }
+    .person-row:hover { background: rgba(0,255,204,0.03); }
+    .person-row.selected { background: rgba(255,204,0,0.08); color: var(--gold); }
+    .main { flex: 1; position: relative; padding: 8px; }
+    #map { height: 100%; border-radius: 8px; overflow: hidden; }
+    #summaryBox { position: absolute; left: 12px; bottom: 12px; background: rgba(0,0,0,0.6); padding: 8px; border-radius: 6px; color: var(--gold); font-size: 10px; }
+    .leaflet-popup-content-wrapper { max-height: 70vh; overflow-y: auto; }
+    .leaflet-popup-content { font-size: 12px; line-height: 1.4; max-width: 300px; }
+    .leaflet-popup-content img { max-width: 100%; height: auto; }
+    @media (max-width: 880px) { .sidebar { width: 42%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/logo.png" alt="Buglasan 2025 Logo">
+    <h1>Buglasan Festival 2025 — Deployment Dashboard</h1>
+    <nav>
+      <select id="areaFilter"><option value="All">All Areas</option></select>
+      <select id="shiftFilterTop"><option value="All">All Shifts</option></select>
+      <button id="refreshBtn">Refresh</button>
+    </nav>
+    <div id="clock" style="margin-left:10px; padding: 4px 8px; background: rgba(0,0,0,0.4); border-radius: 4px; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0.5px;"></div>
+  </header>
+
+  <div class="app">
+    <div class="sidebar">
+      <div id="lastUpdated" style="font-size:11px;color:#aaa;margin-bottom:4px">Last updated: --</div><br>
+      <h2>List of Personnel</h2>
+      <table id="personnelTable">
+        <thead>
+          <tr><th>Name of TL</th><th>Contact</th><th>Call Sign</th><th>Shift</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div style="margin-top:10px"><span id="togglePersonnel" style="color:var(--accent5);cursor:pointer;display:none">Show more</span></div>
+    </div>
+
+    <div class="main">
+      <div id="map"></div>
+      <div id="summaryBox">Summary...</div>
+    </div>
+  </div>
+
+<script>
+/* -------------------- Configuration -------------------- */
+const DEPLOYMENT_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR4VtzZRxV-Z2wes5L5yta77awXf7PMEaDJPu1nvFr1hXEcRa7NaHPk2R0McPW-xMTsKSCuufRXoE7U/pub?output=csv";
+
+/* -------------------- Helpers -------------------- */
+function escapeHtml(s) { return (s || '').toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+function normalize(s) { return (s || '').toString().trim().toLowerCase(); }
+
+function getField(row, ...keys) {
+  if (!row) return '';
+  for (const k of keys) { if (k in row && row[k]) return row[k]; }
+  const cols = Object.keys(row || {});
+  for (const k of keys) {
+    const target = k.toString().trim().toLowerCase();
+    for (const c of cols) {
+      if (c && c.toString().trim().toLowerCase().includes(target) && row[c]) return row[c];
+    }
+  }
+  return '';
+}
+
+async function fetchCsv(url) {
+  const sep = url.includes('?') ? '&' : '?';
+  const res = await fetch(url + `${sep}t=${Date.now()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('CSV fetch failed: ' + res.status);
+  const txt = await res.text();
+  return Papa.parse(txt, { header: true, skipEmptyLines: true }).data;
+}
+
+function parseLatLng(val) {
+  if (!val) return null;
+  const parts = String(val).replace(/[()]/g, '').split(/[;,\s]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const a = parseFloat(parts[0]), b = parseFloat(parts[1]);
+    if (!isNaN(a) && !isNaN(b)) return { lat: a, lng: b };
+  }
+  return null;
+}
+
+function parsePersonnel(raw) {
+  if (!raw) return [];
+  return String(raw).split(/[;\n,]+/).map(x => x.trim()).filter(Boolean).map(p => {
+    const m = p.match(/^(.*?)(\s*\(?\s*(\+?[0-9]{8,14})\)?)?$/);
+    if (m) {
+      let num = m[3] ? m[3].trim() : '';
+      if (num) {
+        const digits = num.replace(/\D/g, '');
+        if (digits.length === 11 && digits.startsWith('0')) num = '+63' + digits.slice(1);
+        else if (digits.length === 10 && digits.startsWith('9')) num = '+63' + digits;
+        else if (!num.startsWith('+') && /^\d+$/.test(num)) num = digits;
+      }
+      return { name: m[1].trim(), mobile: num };
+    }
+    return { name: p, mobile: '' };
+  });
+}
+
+function makeDisplayUrl(raw) {
+  if (!raw) return '';
+  let url = String(raw).trim();
+  const m = url.match(/IMAGE\(["']?(https[^"')]+)["']?\)/i);
+  if (m) url = m[1];
+  try {
+    if (url.includes("open?id=")) {
+      const id = new URL(url).searchParams.get("id");
+      if (id) return `https://drive.google.com/thumbnail?id=${id}&sz=w420`;
+    }
+    if (url.includes("/file/d/")) {
+      const match = url.match(/\/file\/d\/([^/]+)\//);
+      if (match) return `https://drive.google.com/thumbnail?id=${match[1]}&sz=w420`;
+    }
+    if (url.startsWith("http")) return url;
+  } catch (e) {
+    console.warn("[IMG PARSER] Failed:", raw, e);
+  }
+  return 'https://via.placeholder.com/160x90.png';
+}
+
+function normalizeToViber(num) {
+  if (!num) return '';
+  let n = String(num).trim();
+  if (n.startsWith('+')) return n;
+  const digits = n.replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('0')) return '+63' + digits.slice(1);
+  if (digits.length === 10 && digits.startsWith('9')) return '+63' + digits;
+  return digits || '';
+}
+
+/* -------------------- DOM refs -------------------- */
+const areaFilter = document.getElementById('areaFilter');
+const shiftFilterTop = document.getElementById('shiftFilterTop');
+const personnelTbody = document.querySelector('#personnelTable tbody');
+const summaryBox = document.getElementById('summaryBox');
+const togglePersonnel = document.getElementById('togglePersonnel');
+
+/* -------------------- State -------------------- */
+let allData = [], displayedMarkers = [], personnelExpanded = false, selectedStation = 'All', selectedShift = 'All';
+
+// ---- Map Setup ----
+const DEFAULT_CENTER = [9.3095427, 123.2887356];
+const DEFAULT_ZOOM = 14.5;
+
+const map = L.map('map', {
+  zoomSnap: 0.1,
+  zoomDelta: 0.5,
+  minZoom: 4,
+  maxZoom: 22,
+  zoomControl: true
+}).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; PICTMU, NOrPPO, PRO NIR',
+  maxZoom: 22
+}).addTo(map);
+
+map.whenReady(() => setTimeout(() => map.invalidateSize(), 200));
+
+/* -------------------- Clock Function -------------------- */
+function updateClock() {
+  const now = new Date();
+  const options = {
+    timeZone: 'Asia/Manila',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour24: false
+  };
+  const timeString = now.toLocaleTimeString('en-US', options);
+  document.getElementById('clock').textContent = timeString;
+}
+
+setInterval(updateClock, 1000);
+updateClock();
+
+/* -------------------- Markers & UI rendering -------------------- */
+function clearMarkers() {
+  displayedMarkers.forEach(m => { try { map.removeLayer(m.marker); } catch(e) {} });
+  displayedMarkers = [];
+}
+
+function renderPopup(record) {
+  const wrapper = document.createElement('div');
+  wrapper.style.maxWidth = '300px';
+  wrapper.style.maxHeight = '70vh';
+  wrapper.style.overflowY = 'auto';
+  let html = `<strong>${escapeHtml(record.area)}</strong><br>
+    <b>Shift:</b> ${escapeHtml(record.displayShift || record.shift || 'Unspecified')}<br>
+    <b>Communication Capability:</b> ${escapeHtml(record.comm)}<br>
+    <b>Call Sign:</b> ${escapeHtml(record.callsign)}<br>
+    <b>Standby Point:</b> ${escapeHtml(record.landmark)}<br>
+    <b>Personnel on Duty:</b><br>`;
+  
+  if (record.PersonnelList && record.PersonnelList.length) {
+    record.PersonnelList.forEach((p, index) => {
+      const v = p.mobile || '';
+      const viber = normalizeToViber(v);
+      const link = viber ? `<b><a href="viber://chat?number=${encodeURIComponent(viber)}" style="border-radius: 5px;background:#0f0;color:#000;text-decoration:none">${escapeHtml(v)}</a></b>` : 'no mobile';
+      html += `${index + 1}. ${escapeHtml(p.name)}<br><span style="margin-left:15px;opacity:0.9">Mobile #: ${link}</span><br>`;
+    });
+  } else {
+    html += '<span style="opacity:0.9">No personnel listed</span><br>';
+  }
+
+  wrapper.innerHTML = html;
+
+  if (record.photo) {
+    const imgUrl = makeDisplayUrl(record.photo || "");
+    if (imgUrl) {
+      const img = document.createElement('img');
+      img.src = imgUrl;
+      img.style.maxWidth = '100%';
+      img.style.height = 'auto';
+      img.style.display = 'block';
+      img.style.marginTop = '6px';
+      img.style.borderRadius = '8px';
+      img.style.boxShadow = '0 0 12px rgba(0,255,204,0.3)';
+      img.onerror = () => { img.style.display = 'none'; };
+      wrapper.appendChild(img);
+    }
+  }
+  return wrapper;
+}
+
+function addMarkerFor(record) {
+  if (!record.latlng) return null;
+
+  const s = normalize(record.shift || '');
+  const area = normalize(record.area || '');
+
+  // --- SHIFT ICONS (default 1st–3rd shift) ---
+  const shiftConfigs = [
+    {
+      pattern: /1st.*shift/i,
+      label: 'Shift 1',
+      iconUrl: 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/1st-Shift.png'
+    },
+    {
+      pattern: /2nd.*shift/i,
+      label: 'Shift 2',
+      iconUrl: 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/2nd-Shift.png'
+    },
+    {
+      pattern: /3rd.*shift/i,
+      label: 'Shift 3',
+      iconUrl: 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/3rd-Shift.png'
+    }
+  ];
+
+  // --- AREA-SPECIFIC ICONS ---
+  const areaIcons = {
+    'llmscc': 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/llmsc.jpg',
+    'perdices coliseum': 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/perdices.jpg',
+    'dumaguete city street (parade and street dance)': 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/parade.jpg',
+    'escaño beach (music feast)': 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/music.jpg',
+    'boulevard area': 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/boulevard.jpg',
+    'plenary hall': 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/plenary.jpg',
+  };
+
+  let iconUrl = null;
+  let label = '';
+
+  // 🟡 Check if the area matches one of the special event locations
+  for (const key in areaIcons) {
+    if (area.includes(key)) {
+      iconUrl = areaIcons[key];
+      label = record.area;
+      break;
+    }
+  }
+
+  // 🔵 If no area icon matched, fall back to shift icons (Capitol 1–3 included)
+  if (!iconUrl) {
+    const shiftMatch = shiftConfigs.find(sc => s.match(sc.pattern));
+    iconUrl = shiftMatch ? shiftMatch.iconUrl : 'https://raw.githubusercontent.com/pronir-norppo/buglasan2025/refs/heads/main/unspecified.png';
+    label = shiftMatch ? shiftMatch.label : 'Unspecified';
+  }
+
+  // Create marker icon
+  const icon = L.icon({
+    iconUrl,
+    iconSize: [34, 34],
+    iconAnchor: [17, 34],
+    popupAnchor: [0, -34],
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    shadowSize: [41, 41],
+    shadowAnchor: [12, 40]
+  });
+
+  const marker = L.marker([record.latlng.lat, record.latlng.lng], { icon }).addTo(map);
+  record.displayShift = label;
+  marker.bindPopup(renderPopup(record));
+  displayedMarkers.push({ marker, data: record });
+  return marker;
+}
+
+/* -------------------- Table rendering -------------------- */
+function renderPersonnelTable(filtered) {
+  personnelTbody.innerHTML = '';
+  if (selectedStation === 'All') {
+    personnelTbody.innerHTML = '<tr><td colspan="4" style="opacity:0.6;padding:10px;text-align:center">Select Area to view duty personnel</td></tr>';
+    togglePersonnel.style.display = 'none';
+    return;
+  }
+
+  const shiftConfigs = [
+    { pattern: /1st.*shift/i, color: 'green', label: 'Shift 1' },
+    { pattern: /2nd.*shift/i, color: 'purple', label: 'Shift 2' },
+    { pattern: /3rd.*shift/i, color: 'orange', label: 'Shift 3' },
+    { pattern: /other/i, color: 'gray', label: 'Others' },
+    { pattern: /.*/, color: 'yellow', label: 'Unspecified' }
+  ];
+
+  const rows = [];
+  filtered.forEach(r => {
+    const personnelList = r.PersonnelList || [];
+    const firstPerson = personnelList[0] || { name: 'Unnamed', mobile: '' };
+    const name = personnelList.length > 1 ? `${firstPerson.name} and buddy` : firstPerson.name;
+    const mobile = firstPerson.mobile || '';
+    const s = normalize(r.shift || '');
+    const shiftMatch = shiftConfigs.find(sc => s.match(sc.pattern));
+    const shiftColor = shiftMatch ? shiftMatch.color : 'yellow';
+    const shiftLabel = r.displayShift || (shiftMatch ? shiftMatch.label : 'Unspecified');
+    rows.push({ name: name, mobile: mobile, call: r.callsign || '', shift: shiftLabel, shiftColor, r });
+  });
+
+  const visible = personnelExpanded ? rows : rows.slice(0, 6);
+  visible.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.className = 'person-row';
+    const viberNum = normalizeToViber(p.mobile);
+    const viberLink = viberNum ? `<a href="viber://chat?number=${encodeURIComponent(viberNum)}" style="color:#00ffcc;text-decoration:none">${escapeHtml(p.mobile)}</a>` : 'no mobile';
+    tr.innerHTML = `<td>${escapeHtml(p.name)}</td><td>${viberLink}</td><td>${escapeHtml(p.call)}</td><td style="color:${p.shiftColor}">${escapeHtml(p.shift)}</td>`;
+    tr.onclick = () => {
+      document.querySelectorAll('.person-row.selected').forEach(x => x.classList.remove('selected'));
+      tr.className = 'person-row selected';
+      const m = displayedMarkers.find(x => x.data === p.r);
+      if (m) {
+        map.flyTo(m.marker.getLatLng(), 18);
+        m.marker.openPopup();
+      }
+    };
+    personnelTbody.appendChild(tr);
+  });
+  togglePersonnel.style.display = rows.length > 6 ? 'inline-block' : 'none';
+  togglePersonnel.textContent = personnelExpanded ? 'Show less' : `Show more (${rows.length})`;
+}
+
+/* -------------------- Summary -------------------- */
+function updateSummary(filtered) {
+  const total = filtered.reduce((a, r) => a + ((r.PersonnelList && r.PersonnelList.length) || 1), 0);
+  summaryBox.innerHTML = (selectedStation === 'All') ? `Total Personnel: ${total}` : `<b>${escapeHtml(selectedStation)}</b><br>Personnel: ${total}`;
+}
+
+/* -------------------- Apply filters -------------------- */
+function applyFilters() {
+  clearMarkers();
+  const filtered = allData.filter(d =>
+    (selectedStation === 'All' || normalize(d.area) === normalize(selectedStation)) &&
+    (selectedShift === 'All' || normalize(d.shift) === normalize(selectedShift))
+  );
+
+  if (!filtered.length) {
+    personnelTbody.innerHTML = '<tr><td colspan="4" style="opacity:0.6;padding:10px;text-align:center">No deployments found</td></tr>';
+    summaryBox.innerHTML = '⚠️ No data found.';
+    return;
+  }
+
+  filtered.forEach(r => addMarkerFor(r));
+  renderPersonnelTable(filtered);
+  updateSummary(filtered);
+}
+
+/* -------------------- Load CSV and initialize -------------------- */
+async function loadData() {
+  try {
+    const rows = await fetchCsv(DEPLOYMENT_CSV);
+    allData = rows.map(r => {
+      const record = {
+        raw: r,
+        area: getField(r, 'Area of Deployment', 'Area'),
+        shift: getField(r, 'Duty Shift', 'Shift'),
+        comm: getField(r, 'Communication Capability', 'Comm'),
+        callsign: getField(r, 'Call Sign', 'Callsign'),
+        landmark: getField(r, 'Stanbypoint (Landmark)', 'Standbypoint', 'Standby Point'),
+        photo: getField(r, 'Picture (with Timestamp)', 'Picture', 'Photo'),
+        latlng: parseLatLng(getField(r, 'Lat_Long (e.g. 9.33608, 123.30659)', 'Lat_Long', 'Coordinates')),
+        PersonnelList: parsePersonnel(getField(r, 'Personnel (Rank_FName_MI_LN (Contact #)', 'Personnel'))
+      };
+      if (record.photo) record.photo = makeDisplayUrl(record.photo);
+      return record;
+    });
+
+    const areas = [...new Set(allData.map(d => (d.area || 'Unknown').trim()))].sort();
+    areaFilter.innerHTML = '<option value="All">All Areas</option>' + areas.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
+    const shifts = [...new Set(allData.map(d => (d.shift || 'Unspecified').trim()))].sort();
+    shiftFilterTop.innerHTML = '<option value="All">All Shifts</option>' + shifts.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+
+    selectedStation = 'All';
+    selectedShift = 'All';
+    applyFilters();
+    updateTimestamp();
+  } catch (err) {
+    console.error(err);
+    alert('Failed to load CSV. Make sure the sheet is published as CSV and URL is public.');
+  }
+}
+
+function updateTimestamp() {
+  const el = document.getElementById('lastUpdated');
+  if (!el) return;
+  const now = new Date();
+  const options = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+  el.textContent = "Last updated: " + now.toLocaleString('en-US', options);
+}
+
+/* -------------------- Events -------------------- */
+areaFilter.onchange = () => { selectedStation = areaFilter.value; applyFilters(); updateTimestamp(); };
+shiftFilterTop.onchange = () => { selectedShift = shiftFilterTop.value; applyFilters(); updateTimestamp(); };
+togglePersonnel.onclick = () => { personnelExpanded = !personnelExpanded; applyFilters(); updateTimestamp(); };
+document.getElementById('refreshBtn').onclick = () => loadData();
+
+/* -------------------- Start -------------------- */
+loadData();
+</script>
+</body>
+</html>
